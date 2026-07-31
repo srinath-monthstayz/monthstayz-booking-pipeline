@@ -1,0 +1,25 @@
+{
+  "name": "monthstayz-booking-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automates Airbnb 'Reservation confirmed' emails into Airtable Master Trips + CRM records and Google Calendar blocks.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "get-gmail-token": "node scripts/get-gmail-token.mjs"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "googleapis": "173.0.0",
+    "libphonenumber-js": "1.11.9"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3",
+    "@types/node": "20.16.11",
+    "@types/react": "18.3.11"
+  }
+}
