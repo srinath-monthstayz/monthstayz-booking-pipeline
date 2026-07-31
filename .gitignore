@@ -8,3 +8,8 @@ node_modules/
 
 .vercel
 .env*
+
+# Google Cloud service-account key files (never commit real credentials)
+gen-lang-client-*.json
+*service-account*.json
+*serviceaccount*.json

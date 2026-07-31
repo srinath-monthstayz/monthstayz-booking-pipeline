@@ -115,10 +115,27 @@ Pub/Sub push subscription, so no extra paid infra is required.
 3. Set `GOOGLE_SERVICE_ACCOUNT_KEY` to the **entire contents** of that JSON
    file (paste as-is; it's valid JSON so newlines inside `private_key` are
    already escaped).
-4. For **every** property calendar the pipeline needs to write to: open that
-   Google Calendar's settings → "Share with specific people" → add the
-   service account's `client_email` with **"Make changes to events"**
-   permission.
+4. For **every** property calendar the pipeline needs to write to, the
+   service account needs "Make changes to events" access. Two ways to do
+   this:
+   - **Manually**: open each Google Calendar's settings → "Share with
+     specific people" → add the service account's `client_email`.
+   - **In bulk**: run `npm run share-calendars` locally (see below) to grant
+     access to every property calendar in Airtable in one go, instead of
+     clicking through each one.
+
+```bash
+GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... AIRTABLE_API_KEY=... \
+SERVICE_ACCOUNT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com \
+npm run share-calendars
+```
+
+This reuses the same OAuth client from the Gmail setup step (just requesting
+a different scope) — open the printed URL and sign in as the Google account
+that actually **owns** the property calendars. It only works for calendars
+that account owns; any calendar owned by someone else (e.g. a property
+owner) will fail and needs to be shared manually by whoever does own it —
+the script prints exactly which ones failed and why.
 
 ### 4. Cron auth
 
