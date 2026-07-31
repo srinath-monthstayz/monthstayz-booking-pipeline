@@ -5,13 +5,15 @@ name: Poll for new Airbnb bookings
 # "crons" block back to vercel.json for native every-5-minutes scheduling
 # and this workflow can be deleted (or left running harmlessly alongside it,
 # since /api/cron/process-bookings is idempotent).
-# SCHEDULE TEMPORARILY DISABLED (2026-07-31): a run against the unbounded
-# Gmail search backlog created 21 real Master Trips records for historical
-# bookings before timing out, likely duplicating already-existing manual
-# entries. Re-enable the `schedule:` trigger below only after: (1) the
-# duplicates are resolved, and (2) the Gmail query has a date/recency bound
-# so it can never sweep up old bookings again.
+#
+# Re-enabled 2026-07-31 after the historical-duplicate incident earlier
+# today: root cause (unbounded Gmail search) is fixed — see
+# GMAIL_LOOKBACK_DAYS / GMAIL_MAX_PER_RUN in src/lib/gmail.ts — and the 24
+# test-created Master Trips records, 5 CRM contacts, and 12 calendar events
+# from both test runs have been removed.
 on:
+  schedule:
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 jobs:
