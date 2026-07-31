@@ -10,6 +10,29 @@ Polls every 5 minutes via `/api/cron/process-bookings`, currently triggered
 by a GitHub Actions workflow rather than Vercel's own cron — see
 "Scheduling" below.
 
+## ⚠️ Incident: 2026-07-31 — historical duplicates on first real run
+
+The first live test run had no date bound on the Gmail search query. It
+matched every historical "Reservation confirmed" email in the inbox, created
+21 Master Trips records before timing out, and 14 of those turned out to be
+exact duplicates of bookings already entered manually before this pipeline
+existed (same property + same check-in/checkout dates). The GitHub Actions
+schedule was disabled immediately (see `.github/workflows/cron.yml`) to stop
+further runs.
+
+**Root cause fixed**: `listNewBookingEmailIds` now bounds the Gmail search to
+a rolling `newer_than:Nd` window (`GMAIL_LOOKBACK_DAYS`, default 3) instead
+of unbounded history, and defaults to a smaller per-run batch
+(`GMAIL_MAX_PER_RUN`, default 8) so a run can't time out partway through a
+large batch.
+
+**Before re-enabling the schedule**, resolve the 14 duplicate Master Trips
+records (left in place pending review — this is a business decision, not
+something the pipeline should do on its own) and confirm the fix above with
+a manual test run (`workflow_dispatch` in GitHub Actions, or the `curl`
+command under "Local testing" below) before turning `schedule:` back on in
+`.github/workflows/cron.yml`.
+
 ## ⚠️ Guest phone number — Airbnb page scraper (unverified)
 
 Real Airbnb "Reservation confirmed" emails contain no phone number anywhere.

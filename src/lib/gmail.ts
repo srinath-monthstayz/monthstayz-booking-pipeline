@@ -14,15 +14,22 @@ function getClient(): gmail_v1.Gmail {
   return google.gmail({ version: "v1", auth: getGoogleOAuthClient() });
 }
 
-/** Gmail search query for new, unprocessed Airbnb booking-confirmation emails. Configurable via env. */
+/**
+ * Gmail search query for new, unprocessed Airbnb booking-confirmation emails.
+ * Bounded to a rolling lookback window (GMAIL_LOOKBACK_DAYS, default 3) so a
+ * paused pipeline or a first run never sweeps up years of historical
+ * bookings — a 3-day window comfortably covers any gap between cron runs
+ * without ever reaching into the old backlog. Configurable via env.
+ */
 function buildSearchQuery(): string {
   const base =
     process.env.GMAIL_SEARCH_QUERY ??
     'from:(automated@airbnb.com OR express@airbnb.com) subject:"Reservation confirmed"';
+  const lookbackDays = Number(process.env.GMAIL_LOOKBACK_DAYS ?? "3");
   const exclusions = [processedLabelName(), needsAttentionLabelName()]
     .map((name) => `-label:${name.replace(/\s+/g, "-")}`)
     .join(" ");
-  return `${base} ${exclusions}`;
+  return `${base} newer_than:${lookbackDays}d ${exclusions}`;
 }
 
 function processedLabelName(): string {
@@ -54,8 +61,17 @@ async function ensureLabelId(gmail: gmail_v1.Gmail, name: string): Promise<strin
   return created.data.id!;
 }
 
-/** Returns Gmail message IDs for unprocessed booking-confirmation emails, oldest first. */
-export async function listNewBookingEmailIds(maxResults = 25): Promise<string[]> {
+/**
+ * Returns Gmail message IDs for unprocessed booking-confirmation emails,
+ * oldest first. Default batch size is deliberately small — each email
+ * involves several sequential Airtable/Calendar round-trips, and a large
+ * batch risks exceeding the serverless function's time limit mid-run
+ * (leaving some emails processed-and-labeled and others not, which is safe
+ * but wasteful). Remaining emails are simply picked up on the next run.
+ */
+export async function listNewBookingEmailIds(
+  maxResults = Number(process.env.GMAIL_MAX_PER_RUN ?? "8")
+): Promise<string[]> {
   const gmail = getClient();
   const { data } = await gmail.users.messages.list({
     userId: "me",
