@@ -1,0 +1,27 @@
+name: Poll for new Airbnb bookings
+
+# Temporary scheduler while the Vercel project is on the Hobby plan, which
+# only allows daily native cron jobs. Once upgraded to Vercel Pro, add a
+# "crons" block back to vercel.json for native every-5-minutes scheduling
+# and this workflow can be deleted (or left running harmlessly alongside it,
+# since /api/cron/process-bookings is idempotent).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call process-bookings endpoint
+        run: |
+          status=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ vars.BOOKING_PIPELINE_URL }}/api/cron/process-bookings")
+          echo "HTTP status: $status"
+          cat /tmp/response.json
+          if [ "$status" -ge 400 ]; then
+            echo "::error::process-bookings endpoint returned HTTP $status"
+            exit 1
+          fi

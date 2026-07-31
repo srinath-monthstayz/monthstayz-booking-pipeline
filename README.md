@@ -6,7 +6,9 @@ Automates Airbnb "Reservation confirmed" emails into:
 2. An Airtable **🛃CRM** contact (linked if the guest already exists, created if not)
 3. An all-day Google Calendar block on the matched property's calendar
 
-Runs on Vercel Cron every 5 minutes via `/api/cron/process-bookings`.
+Polls every 5 minutes via `/api/cron/process-bookings`, currently triggered
+by a GitHub Actions workflow rather than Vercel's own cron — see
+"Scheduling" below.
 
 ## ⚠️ Guest phone number — Airbnb page scraper (unverified)
 
@@ -147,14 +149,39 @@ npm run typecheck
 npm run build
 ```
 
-Then deploy to Vercel (`vercel --prod` or via the Git integration) and set
-the environment variables above in Project Settings. `vercel.json` already
-declares the every-5-minutes cron schedule.
+The repo is connected to Vercel project `monthstayz/monthstayz-booking-pipeline`
+for auto-deploy — every push to `main` deploys automatically. Set the
+environment variables above in that project's Settings → Environment
+Variables.
 
-**Note on Vercel plan limits**: confirm your Vercel plan supports 5-minute
-cron intervals and the function's `maxDuration` (currently 60s) before
-relying on this in production — plan-level cron/duration limits vary and
-aren't something this codebase can control.
+## Scheduling (Hobby plan workaround)
+
+Vercel's **Hobby plan only allows cron jobs to run once per day** — a native
+`vercel.json` cron running every 5 minutes gets rejected at deploy time. Since
+this pipeline is currently on Hobby, scheduling is instead handled by
+`.github/workflows/cron.yml`, a GitHub Actions workflow that hits the same
+endpoint every 5 minutes. To finish wiring this up, in the GitHub repo
+Settings → Secrets and variables → Actions:
+
+- Add **repository variable** `BOOKING_PIPELINE_URL` = `https://monthstayz-booking-pipeline.vercel.app`
+- Add **repository secret** `CRON_SECRET` = the exact same value you set for
+  `CRON_SECRET` in Vercel's project env vars (the workflow sends it as the
+  Bearer token; it has to match what `route.ts` checks).
+
+**Once you upgrade the Vercel project to Pro**, you can switch back to
+native scheduling: add a `crons` block back to `vercel.json`,
+
+```json
+{
+  "crons": [{ "path": "/api/cron/process-bookings", "schedule": "*/5 * * * *" }]
+}
+```
+
+and either delete `.github/workflows/cron.yml` or leave it running — the
+pipeline is idempotent, so double-triggering a run is harmless.
+
+Also confirm the function's `maxDuration` (currently 60s in `route.ts`) fits
+your plan's limits.
 
 ## Local testing
 
