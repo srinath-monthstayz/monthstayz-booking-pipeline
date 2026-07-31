@@ -40,6 +40,9 @@ export async function listRecords(
 
   do {
     const params = new URLSearchParams();
+    // Airtable returns fields keyed by field NAME unless this is set — every
+    // field lookup in this codebase is by field ID, so this is required.
+    params.set("returnFieldsByFieldId", "true");
     if (opts.filterByFormula) params.set("filterByFormula", opts.filterByFormula);
     if (opts.maxRecords) params.set("maxRecords", String(opts.maxRecords));
     if (opts.fields) for (const f of opts.fields) params.append("fields[]", f);
@@ -55,7 +58,7 @@ export async function listRecords(
 
 export async function getRecord(tableId: string, recordId: string): Promise<AirtableRecord | null> {
   try {
-    return await airtableFetch(`/${BASE_ID}/${tableId}/${recordId}`);
+    return await airtableFetch(`/${BASE_ID}/${tableId}/${recordId}?returnFieldsByFieldId=true`);
   } catch (err) {
     if (err instanceof Error && err.message.includes(" 404 ")) return null;
     throw err;
@@ -66,7 +69,7 @@ export async function createRecord(
   tableId: string,
   fields: Record<string, unknown>
 ): Promise<AirtableRecord> {
-  const data = await airtableFetch(`/${BASE_ID}/${tableId}`, {
+  const data = await airtableFetch(`/${BASE_ID}/${tableId}?returnFieldsByFieldId=true`, {
     method: "POST",
     body: JSON.stringify({ fields, typecast: true }),
   });
@@ -78,7 +81,7 @@ export async function updateRecord(
   recordId: string,
   fields: Record<string, unknown>
 ): Promise<AirtableRecord> {
-  const data = await airtableFetch(`/${BASE_ID}/${tableId}/${recordId}`, {
+  const data = await airtableFetch(`/${BASE_ID}/${tableId}/${recordId}?returnFieldsByFieldId=true`, {
     method: "PATCH",
     body: JSON.stringify({ fields, typecast: true }),
   });

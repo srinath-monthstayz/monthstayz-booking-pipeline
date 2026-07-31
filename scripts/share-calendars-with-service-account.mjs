@@ -51,6 +51,8 @@ async function fetchPropertiesWithCalendars() {
   let offset;
   do {
     const params = new URLSearchParams();
+    // Airtable returns fields keyed by field NAME unless this is set.
+    params.set("returnFieldsByFieldId", "true");
     params.set("filterByFormula", `NOT({${GOOGLE_CALENDAR_ID_FIELD}} = "")`);
     params.append("fields[]", AIRBNB_LISTING_TITLE_FIELD);
     params.append("fields[]", GOOGLE_CALENDAR_ID_FIELD);
