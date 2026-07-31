@@ -51,6 +51,14 @@ export const PROPERTIES_FIELDS = {
   airbnbId: "fldiDSwS3FzURkhpi", // numeric Airbnb room ID; matched against the rooms/{id} URL in booking emails
   airbnbListingTitle: "fld9Tvr8mNpzy9lG7", // display-only, used for human-readable comments/summaries
   googleCalendarId: "flds2Pkaxh2nx4Kjc",
+  city: "fldS3QKXfaYiBToIx", // singleSelect: "Pattaya" | "Phuket" — routes the Telegram notification
+} as const;
+
+export const PROPERTIES_CHOICES = {
+  city: {
+    pattaya: { id: "selNhtGWCaUPSETna", name: "Pattaya" },
+    phuket: { id: "selrjlqd6X7FkT8Ye", name: "Phuket" },
+  },
 } as const;
 
 export const CRM_FIELDS = {

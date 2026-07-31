@@ -17,6 +17,7 @@ import { normalizePhone } from "../lib/phone";
 import type { ParsedBooking } from "../lib/parseBooking";
 import { findExistingBookingEvent, createAllDayBookingEvent, getEventById } from "../lib/calendar";
 import { fetchGuestPhoneFromAirbnb } from "../lib/airbnbScraper";
+import { sendBookingNotification, type Region } from "../lib/telegram";
 
 export type ProcessResult =
   | { outcome: "processed"; reason: string; detail?: Record<string, unknown> }
@@ -40,7 +41,12 @@ async function resolveProperty(
 ): Promise<{ ok: true; property: AirtableRecord } | { ok: false; reason: string }> {
   const matches = await listRecords(TABLES.properties, {
     filterByFormula: `${fmt(PROPERTIES_FIELDS.airbnbId)} = "${escapeFormulaString(airbnbRoomId)}"`,
-    fields: [PROPERTIES_FIELDS.airbnbId, PROPERTIES_FIELDS.airbnbListingTitle, PROPERTIES_FIELDS.googleCalendarId],
+    fields: [
+      PROPERTIES_FIELDS.airbnbId,
+      PROPERTIES_FIELDS.airbnbListingTitle,
+      PROPERTIES_FIELDS.googleCalendarId,
+      PROPERTIES_FIELDS.city,
+    ],
   });
 
   if (matches.length === 0) {
@@ -213,47 +219,75 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
   });
 
   const calendarId = property.fields[PROPERTIES_FIELDS.googleCalendarId] as string | undefined;
+  let calendarOutcome: { blocked: boolean; eventId?: string; note: string };
+
   if (!calendarId) {
-    return {
-      outcome: "processed",
-      reason: "Master Trips record created; calendar block skipped — property has no Google Calendar ID on file",
-      detail: { tripRecordId: createdTrip.id, propertyId: property.id },
-    };
+    calendarOutcome = { blocked: false, note: "calendar block skipped — property has no Google Calendar ID on file" };
+  } else {
+    const existingEvent = await findExistingBookingEvent(calendarId, booking.confirmationCode);
+    if (existingEvent) {
+      calendarOutcome = { blocked: true, eventId: existingEvent.id!, note: "calendar event already existed (dedup match)" };
+    } else {
+      const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
+      const summary = `${booking.guestName} | Airbnb | ${booking.confirmationCode} (${booking.numberOfGuests} ${guestNoun})`;
+      const createdEvent = await createAllDayBookingEvent({
+        calendarId,
+        summary,
+        checkIn: booking.checkIn,
+        checkoutExclusive: booking.checkoutExclusive,
+      });
+
+      const verifiedEvent = await getEventById(calendarId, createdEvent.id!);
+      if (verifiedEvent.status !== "confirmed") {
+        throw new Error(
+          `Calendar event ${createdEvent.id} for trip ${createdTrip.id} did not verify as confirmed (status: ${verifiedEvent.status})`
+        );
+      }
+      calendarOutcome = { blocked: true, eventId: createdEvent.id!, note: "calendar block created and verified" };
+    }
   }
 
-  const existingEvent = await findExistingBookingEvent(calendarId, booking.confirmationCode);
-  if (existingEvent) {
-    return {
-      outcome: "processed",
-      reason: "Master Trips record created; calendar event already existed (dedup match)",
-      detail: { tripRecordId: createdTrip.id, eventId: existingEvent.id },
-    };
-  }
-
-  const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
-  const summary = `${booking.guestName} | Airbnb | ${booking.confirmationCode} (${booking.numberOfGuests} ${guestNoun})`;
-  const createdEvent = await createAllDayBookingEvent({
-    calendarId,
-    summary,
-    checkIn: booking.checkIn,
-    checkoutExclusive: booking.checkoutExclusive,
-  });
-
-  const verifiedEvent = await getEventById(calendarId, createdEvent.id!);
-  if (verifiedEvent.status !== "confirmed") {
-    throw new Error(
-      `Calendar event ${createdEvent.id} for trip ${createdTrip.id} did not verify as confirmed (status: ${verifiedEvent.status})`
-    );
+  const region = property.fields[PROPERTIES_FIELDS.city] as Region | undefined;
+  let notificationNote = "not sent — property has no City set";
+  if (region === "Pattaya" || region === "Phuket") {
+    try {
+      await sendBookingNotification(region, buildNotificationText(booking, listingTitle, calendarOutcome));
+      notificationNote = `sent to ${region} Telegram group`;
+    } catch (err) {
+      // Notification failures never undo a successful trip/calendar creation — just log it.
+      notificationNote = `failed: ${(err as Error).message}`;
+    }
   }
 
   return {
     outcome: "processed",
-    reason: "Master Trips record and calendar block created and verified",
+    reason: `Master Trips record created; ${calendarOutcome.note}; Telegram notification ${notificationNote}`,
     detail: {
       tripRecordId: createdTrip.id,
-      eventId: createdEvent.id,
+      eventId: calendarOutcome.eventId,
       calendarId,
       crmMatchedBy: crmResolution.matchedBy,
+      region,
+      notificationNote,
     },
   };
+}
+
+function buildNotificationText(
+  booking: ParsedBooking,
+  listingTitle: string,
+  calendarOutcome: { blocked: boolean; note: string }
+): string {
+  const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
+  const calendarLine = calendarOutcome.blocked
+    ? "📅 Calendar blocked"
+    : "⚠️ Calendar NOT blocked (no Google Calendar ID on file)";
+  return [
+    `🛬 <b>New Airbnb booking</b>`,
+    `${booking.guestName} — ${listingTitle}`,
+    `Check-in: ${toAirtableDateString(booking.checkIn)} → Checkout: ${toAirtableDateString(booking.checkoutExclusive)}`,
+    `Guests: ${booking.numberOfGuests} ${guestNoun}`,
+    `Confirmation: ${booking.confirmationCode}`,
+    calendarLine,
+  ].join("\n");
 }
