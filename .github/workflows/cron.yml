@@ -1,19 +1,16 @@
 name: Poll for new Airbnb bookings
 
-# Temporary scheduler while the Vercel project is on the Hobby plan, which
-# only allows daily native cron jobs. Once upgraded to Vercel Pro, add a
-# "crons" block back to vercel.json for native every-5-minutes scheduling
-# and this workflow can be deleted (or left running harmlessly alongside it,
-# since /api/cron/process-bookings is idempotent).
+# GitHub Actions' `schedule:` trigger turned out unreliable in practice (only
+# fired once in over an hour on 2026-07-31, despite "*/5 * * * *" — a known
+# GitHub limitation: scheduled workflows are best-effort and can be silently
+# delayed or skipped, especially for low-traffic repos). Scheduling now
+# happens via an external cron service (cron-job.org) hitting
+# /api/cron/process-bookings directly with the CRON_SECRET bearer token.
 #
-# Re-enabled 2026-07-31 after the historical-duplicate incident earlier
-# today: root cause (unbounded Gmail search) is fixed — see
-# GMAIL_LOOKBACK_DAYS / GMAIL_MAX_PER_RUN in src/lib/gmail.ts — and the 24
-# test-created Master Trips records, 5 CRM contacts, and 12 calendar events
-# from both test runs have been removed.
+# This workflow is kept for manual testing only (workflow_dispatch). Once
+# upgraded to Vercel Pro, native `crons` in vercel.json would be the more
+# "proper" choice, but cron-job.org works fine indefinitely on Hobby.
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 jobs:
