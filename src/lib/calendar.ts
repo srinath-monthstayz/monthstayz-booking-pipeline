@@ -1,31 +1,15 @@
 import { google, calendar_v3 } from "googleapis";
+import { getGoogleOAuthClient } from "./googleAuth";
 
 const TIME_ZONE = "Asia/Bangkok";
 
-function getServiceAccountCredentials(): { client_email: string; private_key: string } {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY is not set");
-
-  let parsed: any;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY is not valid JSON");
-  }
-  if (!parsed.client_email || !parsed.private_key) {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY is missing client_email or private_key");
-  }
-  return parsed;
-}
-
+/**
+ * Authenticates as the same Google account used for Gmail (OAuth, not a
+ * service account) — it already has write access to every property calendar
+ * it manages day-to-day, so no separate per-calendar sharing step is needed.
+ */
 function getClient(): calendar_v3.Calendar {
-  const creds = getServiceAccountCredentials();
-  const auth = new google.auth.JWT({
-    email: creds.client_email,
-    key: creds.private_key,
-    scopes: ["https://www.googleapis.com/auth/calendar"],
-  });
-  return google.calendar({ version: "v3", auth });
+  return google.calendar({ version: "v3", auth: getGoogleOAuthClient() });
 }
 
 /** Formats a Date as YYYY-MM-DD for an all-day Calendar event boundary. */

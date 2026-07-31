@@ -8,8 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "get-gmail-token": "node scripts/get-gmail-token.mjs",
-    "share-calendars": "node scripts/share-calendars-with-service-account.mjs"
+    "get-gmail-token": "node scripts/get-gmail-token.mjs"
   },
   "dependencies": {
     "next": "14.2.35",

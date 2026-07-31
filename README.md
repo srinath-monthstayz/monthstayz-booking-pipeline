@@ -89,55 +89,38 @@ Create a Personal Access Token with `data.records:read` and
 `data.records:write` scope on base `appND9kP55cvkDX7V`, covering the Master
 Trips, Properties, and CRM tables. Set it as `AIRTABLE_API_KEY`.
 
-### 2. Gmail (OAuth)
+### 2. Gmail + Calendar (one shared OAuth login)
+
+Both Gmail (polling/labeling) and Calendar (creating booking blocks) are
+accessed as **the same Google account** via OAuth — whichever mailbox
+receives the Airbnb booking emails, which needs to already have write access
+to the property calendars (no separate service account, no per-calendar
+sharing step).
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create/select
-   a project, enable the **Gmail API**, and create an OAuth 2.0 Client ID of
-   type **Desktop app**.
+   a project, enable **both** the **Gmail API** and the **Google Calendar
+   API**, and create an OAuth 2.0 Client ID of type **Desktop app**.
 2. Locally:
    ```bash
    npm install
    GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... npm run get-gmail-token
    ```
-3. Open the printed URL, sign in as the mailbox that receives the Airbnb
+3. Open the printed URL, sign in as the account that receives the Airbnb
    booking emails (the account this session found them in:
-   `srinath@monthstayzthailand.com`), and approve access.
+   `srinath@monthstayzthailand.com`) **and** already manages the property
+   Google Calendars, and approve access (it'll ask for both Gmail and
+   Calendar permissions in one screen).
 4. Copy the printed `GMAIL_REFRESH_TOKEN` value.
 
 This uses simple polling (Gmail `messages.list` on a cron schedule) — no
-Pub/Sub push subscription, so no extra paid infra is required.
+Pub/Sub push subscription, so no extra paid infra is required. If that
+account doesn't already have access to a given property's calendar, calendar
+creation for that booking will fail (logged as an error, retried next run)
+until someone who does own that calendar shares it with this account the
+normal way (Google Calendar → calendar settings → "Share with specific
+people").
 
-### 3. Google Calendar (service account)
-
-1. In the same (or another) Google Cloud project, create a **Service
-   Account** and enable the **Google Calendar API**.
-2. Create a JSON key for it and download the file.
-3. Set `GOOGLE_SERVICE_ACCOUNT_KEY` to the **entire contents** of that JSON
-   file (paste as-is; it's valid JSON so newlines inside `private_key` are
-   already escaped).
-4. For **every** property calendar the pipeline needs to write to, the
-   service account needs "Make changes to events" access. Two ways to do
-   this:
-   - **Manually**: open each Google Calendar's settings → "Share with
-     specific people" → add the service account's `client_email`.
-   - **In bulk**: run `npm run share-calendars` locally (see below) to grant
-     access to every property calendar in Airtable in one go, instead of
-     clicking through each one.
-
-```bash
-GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... AIRTABLE_API_KEY=... \
-SERVICE_ACCOUNT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com \
-npm run share-calendars
-```
-
-This reuses the same OAuth client from the Gmail setup step (just requesting
-a different scope) — open the printed URL and sign in as the Google account
-that actually **owns** the property calendars. It only works for calendars
-that account owns; any calendar owned by someone else (e.g. a property
-owner) will fail and needs to be shared manually by whoever does own it —
-the script prints exactly which ones failed and why.
-
-### 4. Cron auth
+### 3. Cron auth
 
 Set `CRON_SECRET` to any random string. Vercel Cron automatically sends
 `Authorization: Bearer <CRON_SECRET>` to scheduled invocations when this env
@@ -148,10 +131,9 @@ var is set on the project, which `route.ts` checks.
 | Variable | Purpose |
 |---|---|
 | `AIRTABLE_API_KEY` | Airtable Personal Access Token |
-| `GMAIL_CLIENT_ID` | OAuth client ID (Gmail) |
-| `GMAIL_CLIENT_SECRET` | OAuth client secret (Gmail) |
-| `GMAIL_REFRESH_TOKEN` | From `npm run get-gmail-token` |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | Full JSON key file contents (Calendar) |
+| `GMAIL_CLIENT_ID` | OAuth client ID (Gmail + Calendar) |
+| `GMAIL_CLIENT_SECRET` | OAuth client secret (Gmail + Calendar) |
+| `GMAIL_REFRESH_TOKEN` | From `npm run get-gmail-token` — covers both Gmail and Calendar |
 | `CRON_SECRET` | Shared secret Vercel Cron sends as a Bearer token |
 | `AIRBNB_SESSION_COOKIE` *(optional)* | Cookie header from a logged-in Airbnb host session, for phone lookup — see above. Omitted = pipeline falls back to name-based CRM matching. |
 | `GMAIL_SEARCH_QUERY` *(optional)* | Override the Gmail search query |

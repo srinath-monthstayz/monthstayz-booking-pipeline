@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * One-time helper: run this LOCALLY to obtain a Gmail OAuth refresh token.
+ * One-time helper: run this LOCALLY to obtain a refresh token covering both
+ * Gmail (to poll/label booking emails) and Calendar (to create booking
+ * blocks) — the same account handles both, so one consent flow is enough.
  *
  * Usage:
  *   1. In Google Cloud Console, create an OAuth 2.0 Client ID of type
  *      "Desktop app" (or "Web application" with the redirect URI below
- *      added), and enable the Gmail API on the project.
+ *      added), and enable both the Gmail API and Google Calendar API on
+ *      the project.
  *   2. GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... npm run get-gmail-token
- *   3. Open the printed URL, sign in with the Gmail account that receives
- *      the Airbnb booking emails, and approve access.
+ *   3. Open the printed URL, sign in with the Gmail account that (a)
+ *      receives the Airbnb booking emails and (b) already has write access
+ *      to the property Google Calendars, and approve access.
  *   4. Copy the printed refresh token into GMAIL_REFRESH_TOKEN in Vercel.
  */
 import { google } from "googleapis";
@@ -31,10 +35,16 @@ const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: "offline",
   prompt: "consent", // forces a refresh_token to be issued even on repeat runs
-  scope: ["https://www.googleapis.com/auth/gmail.modify"],
+  scope: [
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar",
+  ],
 });
 
-console.log("\nOpen this URL in a browser, signed in as the mailbox that receives Airbnb booking emails:\n");
+console.log(
+  "\nOpen this URL in a browser, signed in as the account that receives Airbnb booking emails " +
+    "AND already manages the property Google Calendars:\n"
+);
 console.log(authUrl);
 console.log(`\nWaiting for the OAuth redirect on ${REDIRECT_URI} ...\n`);
 

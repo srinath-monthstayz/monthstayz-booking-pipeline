@@ -1,4 +1,5 @@
 import { google, gmail_v1 } from "googleapis";
+import { getGoogleOAuthClient } from "./googleAuth";
 
 export interface ParsedEmail {
   gmailMessageId: string;
@@ -9,23 +10,8 @@ export interface ParsedEmail {
   text: string;
 }
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set`);
-  return value;
-}
-
-function getOAuthClient() {
-  const client = new google.auth.OAuth2(
-    requireEnv("GMAIL_CLIENT_ID"),
-    requireEnv("GMAIL_CLIENT_SECRET")
-  );
-  client.setCredentials({ refresh_token: requireEnv("GMAIL_REFRESH_TOKEN") });
-  return client;
-}
-
 function getClient(): gmail_v1.Gmail {
-  return google.gmail({ version: "v1", auth: getOAuthClient() });
+  return google.gmail({ version: "v1", auth: getGoogleOAuthClient() });
 }
 
 /** Gmail search query for new, unprocessed Airbnb booking-confirmation emails. Configurable via env. */
