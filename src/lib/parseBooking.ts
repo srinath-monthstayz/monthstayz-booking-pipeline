@@ -3,7 +3,6 @@ import type { ParsedEmail } from "./gmail";
 export interface ParsedBooking {
   gmailMessageId: string;
   guestName: string;
-  guestPhoneRaw: string | null;
   confirmationCode: string;
   airbnbRoomId: string;
   checkIn: Date;
@@ -70,7 +69,6 @@ export function parseBookingEmail(email: ParsedEmail): ParseResult {
     booking: {
       gmailMessageId,
       guestName,
-      guestPhoneRaw: extractGuestPhone(text),
       confirmationCode,
       airbnbRoomId,
       checkIn: dates.checkIn,
@@ -155,13 +153,4 @@ function extractTotalPaidThb(text: string): number | null {
   const match = text.match(/TOTAL \(THB\)\s*[^\d]*([\d,]+\.\d{2})/);
   if (!match) return null;
   return Number(match[1].replace(/,/g, ""));
-}
-
-/**
- * TODO: Airbnb "Reservation confirmed" emails do not include a guest phone
- * number in any form (verified against real samples). Pending confirmation
- * of where the phone number can actually be sourced from — do not guess.
- */
-function extractGuestPhone(_text: string): string | null {
-  return null;
 }

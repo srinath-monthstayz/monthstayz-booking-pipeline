@@ -8,25 +8,43 @@ Automates Airbnb "Reservation confirmed" emails into:
 
 Runs on Vercel Cron every 5 minutes via `/api/cron/process-bookings`.
 
-## ⚠️ Known limitation — guest phone number
+## ⚠️ Guest phone number — Airbnb page scraper (unverified)
 
-Real Airbnb "Reservation confirmed" host-notification emails (verified against
-live samples from this account on 2026-07-31) **do not contain the guest's
-phone number anywhere** — not in the body, not in a `tel:` link, and not in
-the same-day "reservation reminder" follow-up email either.
+Real Airbnb "Reservation confirmed" emails contain no phone number anywhere.
+It's only available on Airbnb's *authenticated* "Manage reservation" panel on
+the hosting reservation-details page (`hosting/reservations/details/{code}`).
 
-The pipeline's CRM matching is phone-based per spec, so until the phone
-number's actual source is wired in (`extractGuestPhone` in
-`src/lib/parseBooking.ts` currently always returns `null`), **every booking
-will be skipped and logged** with reason "Guest phone number missing or
-malformed", and the email will be labeled `MonthStayz-Needs-Attention` rather
-than processed. This is intentional — the spec explicitly requires stopping
-rather than guessing when the phone number is missing.
+`src/lib/airbnbScraper.ts` fetches that page using a real, human-established
+login session (`AIRBNB_SESSION_COOKIE` — copy the `cookie` request header
+from Chrome DevTools while logged into Airbnb as the host) and heuristically
+scans the HTML for a phone number. **This has not been verified against a
+real logged-in session** — this environment had no way to inspect the actual
+network request the "Manage reservation" dialog makes. If it doesn't find a
+match in practice:
 
-Once you show where Airbnb actually exposes the number (e.g. the hosting
-reservation details page, a different email type, or an export), update
-`extractGuestPhone` accordingly and this unblocks automatically — no other
-code needs to change.
+1. Open DevTools → Network tab on a real reservation page, click
+   "Manage reservation", and find the XHR/fetch request that returns the
+   phone number.
+2. Share the request URL, headers, and response shape so
+   `fetchGuestPhoneFromAirbnb` can be pointed at the real endpoint instead of
+   scraping rendered HTML.
+
+This code never automates login, solves a CAPTCHA, or otherwise bypasses bot
+detection — it only reuses a cookie you exported from your own already
+logged-in browser. That cookie **will expire periodically**; when phone
+lookups start failing, re-export it. Scraping an authenticated Airbnb page
+like this may also be against Airbnb's Terms of Service for automated
+access — that's a call for you to make about your own host account, not
+something this code enforces.
+
+**Graceful degradation**: if the scraper isn't configured, the session has
+expired, or Airbnb returns nothing recognizable, the pipeline never blocks
+the booking on that account — it automatically falls back to matching CRM
+contacts by exact (case-insensitive) First + Last Name instead. A name
+collision across multiple existing contacts is treated as genuinely
+ambiguous and skipped/logged, never guessed. Every processed booking's log
+line records `crmMatchedBy: "phone" | "name-new" | "name-existing"` so you
+can see which path was used.
 
 ## How matching works
 
@@ -36,9 +54,9 @@ code needs to change.
   because two differently-worded titles can point at the same unit, and two
   similarly-worded titles can point at *different* units in the same
   building. Zero or multiple matches → skipped and logged, never guessed.
-- **CRM contact**: by normalized phone number (last-9-digit comparison, so
-  `+66812345678`, `0812345678`, etc. compare equal). Missing/unparseable
-  phone → skipped and logged (see limitation above).
+- **CRM contact**: by normalized phone number when the scraper produces one
+  (last-9-digit comparison, so `+66812345678`, `0812345678`, etc. compare
+  equal); otherwise by exact name match (see above).
 - **De-dup**: every run first searches Master Trips' Comments field for the
   booking's confirmation code. If found, the run treats it as already
   processed and only labels the email — no new records are created.
@@ -116,6 +134,7 @@ var is set on the project, which `route.ts` checks.
 | `GMAIL_REFRESH_TOKEN` | From `npm run get-gmail-token` |
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | Full JSON key file contents (Calendar) |
 | `CRON_SECRET` | Shared secret Vercel Cron sends as a Bearer token |
+| `AIRBNB_SESSION_COOKIE` *(optional)* | Cookie header from a logged-in Airbnb host session, for phone lookup — see above. Omitted = pipeline falls back to name-based CRM matching. |
 | `GMAIL_SEARCH_QUERY` *(optional)* | Override the Gmail search query |
 | `GMAIL_PROCESSED_LABEL` *(optional)* | Override the "done" label name |
 | `GMAIL_NEEDS_ATTENTION_LABEL` *(optional)* | Override the "needs attention" label name |

@@ -16,6 +16,7 @@ import {
 import { normalizePhone } from "../lib/phone";
 import type { ParsedBooking } from "../lib/parseBooking";
 import { findExistingBookingEvent, createAllDayBookingEvent, getEventById } from "../lib/calendar";
+import { fetchGuestPhoneFromAirbnb } from "../lib/airbnbScraper";
 
 export type ProcessResult =
   | { outcome: "processed"; reason: string; detail?: Record<string, unknown> }
@@ -78,6 +79,81 @@ function splitGuestName(fullName: string): { firstName: string; lastName: string
   return { firstName: parts.slice(0, -1).join(" "), lastName: parts[parts.length - 1] };
 }
 
+/**
+ * Exact, case-insensitive First+Last Name match. Used only when the Airbnb
+ * phone lookup couldn't produce a number — a coarser signal than phone, so a
+ * name collision (>1 match) is treated as genuinely ambiguous and skipped
+ * rather than guessed.
+ */
+async function findCrmContactsByName(
+  firstName: string,
+  lastName: string
+): Promise<AirtableRecord[]> {
+  const formula =
+    `AND(LOWER({${CRM_FIELDS.firstName}}) = "${escapeFormulaString(firstName.toLowerCase())}", ` +
+    `LOWER({${CRM_FIELDS.lastName}}) = "${escapeFormulaString(lastName.toLowerCase())}")`;
+  return listRecords(TABLES.crm, {
+    filterByFormula: formula,
+    fields: [CRM_FIELDS.firstName, CRM_FIELDS.lastName, CRM_FIELDS.phoneNumber],
+  });
+}
+
+type CrmResolution =
+  | { ok: true; crmContactId: string; isRepeat: boolean; matchedBy: "phone" | "name-new" | "name-existing" }
+  | { ok: false; reason: string };
+
+async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution> {
+  const phoneLookup = await fetchGuestPhoneFromAirbnb(booking.confirmationCode);
+  const normalizedPhone = phoneLookup.ok ? normalizePhone(phoneLookup.phone) : null;
+
+  if (normalizedPhone) {
+    const existing = await findCrmContactByPhone(normalizedPhone);
+    if (existing) {
+      return { ok: true, crmContactId: existing.id, isRepeat: true, matchedBy: "phone" };
+    }
+    const { firstName, lastName } = splitGuestName(booking.guestName);
+    const created = await createRecord(TABLES.crm, {
+      [CRM_FIELDS.firstName]: firstName,
+      [CRM_FIELDS.lastName]: lastName,
+      [CRM_FIELDS.phoneNumber]: normalizedPhone,
+      [CRM_FIELDS.initialContactPoint]: CRM_CHOICES.initialContactPoint.airbnb.name,
+    });
+    await verifyRecordPersisted(TABLES.crm, created.id, {
+      [CRM_FIELDS.firstName]: firstName,
+      [CRM_FIELDS.phoneNumber]: normalizedPhone,
+    });
+    return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "phone" };
+  }
+
+  // Phone unavailable (scraper not configured, session expired, or no match found) — fall back to name.
+  const { firstName, lastName } = splitGuestName(booking.guestName);
+  const nameMatches = await findCrmContactsByName(firstName, lastName);
+
+  if (nameMatches.length > 1) {
+    return {
+      ok: false,
+      reason:
+        `Phone unavailable (${!phoneLookup.ok ? phoneLookup.reason : "no CRM match"}) and ` +
+        `${nameMatches.length} CRM contacts share the name "${booking.guestName}" — ambiguous, cannot link safely`,
+    };
+  }
+
+  if (nameMatches.length === 1) {
+    return { ok: true, crmContactId: nameMatches[0].id, isRepeat: true, matchedBy: "name-existing" };
+  }
+
+  const created = await createRecord(TABLES.crm, {
+    [CRM_FIELDS.firstName]: firstName,
+    [CRM_FIELDS.lastName]: lastName,
+    [CRM_FIELDS.initialContactPoint]: CRM_CHOICES.initialContactPoint.airbnb.name,
+  });
+  await verifyRecordPersisted(TABLES.crm, created.id, {
+    [CRM_FIELDS.firstName]: firstName,
+    [CRM_FIELDS.lastName]: lastName,
+  });
+  return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "name-new" };
+}
+
 function toAirtableDateString(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -98,38 +174,14 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
   }
   const property = propertyResult.property;
 
-  const normalizedPhone = normalizePhone(booking.guestPhoneRaw);
-  if (!normalizedPhone) {
-    return {
-      outcome: "skipped",
-      reason: "Guest phone number missing or malformed — cannot verify CRM contact match",
-      detail: { rawPhone: booking.guestPhoneRaw },
-      retryable: true,
-    };
+  const crmResolution = await resolveCrmContact(booking);
+  if (!crmResolution.ok) {
+    return { outcome: "skipped", reason: crmResolution.reason, retryable: true };
   }
-
-  const existingCrmContact = await findCrmContactByPhone(normalizedPhone);
-  const inquiryType = existingCrmContact
+  const crmContactId = crmResolution.crmContactId;
+  const inquiryType = crmResolution.isRepeat
     ? MASTER_TRIPS_CHOICES.inquiryType.repeat.name
     : MASTER_TRIPS_CHOICES.inquiryType.fresh.name;
-
-  let crmContactId: string;
-  if (existingCrmContact) {
-    crmContactId = existingCrmContact.id;
-  } else {
-    const { firstName, lastName } = splitGuestName(booking.guestName);
-    const created = await createRecord(TABLES.crm, {
-      [CRM_FIELDS.firstName]: firstName,
-      [CRM_FIELDS.lastName]: lastName,
-      [CRM_FIELDS.phoneNumber]: normalizedPhone,
-      [CRM_FIELDS.initialContactPoint]: CRM_CHOICES.initialContactPoint.airbnb.name,
-    });
-    await verifyRecordPersisted(TABLES.crm, created.id, {
-      [CRM_FIELDS.firstName]: firstName,
-      [CRM_FIELDS.phoneNumber]: normalizedPhone,
-    });
-    crmContactId = created.id;
-  }
 
   const listingTitle = (property.fields[PROPERTIES_FIELDS.airbnbListingTitle] as string) || booking.airbnbRoomId;
   const comments =
@@ -197,6 +249,11 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
   return {
     outcome: "processed",
     reason: "Master Trips record and calendar block created and verified",
-    detail: { tripRecordId: createdTrip.id, eventId: createdEvent.id, calendarId },
+    detail: {
+      tripRecordId: createdTrip.id,
+      eventId: createdEvent.id,
+      calendarId,
+      crmMatchedBy: crmResolution.matchedBy,
+    },
   };
 }
