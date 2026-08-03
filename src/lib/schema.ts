@@ -20,7 +20,10 @@ export const MASTER_TRIPS_FIELDS = {
   checkoutDate: "fldiQISqiSkO45tvn",
   paymentStatus: "fld6Fm1g7VYsmKVl1",
   numberOfGuests: "fldlPEchlM3BssJYx",
-  guestContact: "fldcMCTokTCHyvCbv",
+  // "Guest Contact" (fldcMCTokTCHyvCbv) was deleted from the base sometime
+  // after 2026-07-31 (discovered 2026-08-03 when every booking started
+  // silently failing). Guest name is folded into Comments instead. If a
+  // replacement field is added, verify its ID before reintroducing here.
   comments: "fld63KH9a06DGbgKT",
   agreedCost: "fldCmeh4OXrF5wt5m",
   inquiryStatus: "fldxU0AyJl5bkeDg2",

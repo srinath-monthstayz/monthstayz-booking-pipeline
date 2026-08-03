@@ -13,3 +13,8 @@ node_modules/
 gen-lang-client-*.json
 *service-account*.json
 *serviceaccount*.json
+*-automation-*.json
+
+# Unrelated project that ended up nested here (2026-08-03) — not part of
+# this repo, has its own git history, never touch/commit its contents.
+bdc_automation/

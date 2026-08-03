@@ -191,7 +191,7 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
 
   const listingTitle = (property.fields[PROPERTIES_FIELDS.airbnbListingTitle] as string) || booking.airbnbRoomId;
   const comments =
-    `Airbnb booking ${booking.confirmationCode} — ${listingTitle} — ` +
+    `Airbnb booking ${booking.confirmationCode} — ${booking.guestName} — ${listingTitle} — ` +
     `${toAirtableDateString(booking.checkIn)} to ${toAirtableDateString(booking.checkoutExclusive)}`;
 
   const tripFields: Record<string, unknown> = {
@@ -201,7 +201,9 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
     [MASTER_TRIPS_FIELDS.checkoutDate]: toAirtableDateString(booking.checkoutExclusive),
     [MASTER_TRIPS_FIELDS.paymentStatus]: MASTER_TRIPS_CHOICES.paymentStatus.fullyPaid.name,
     [MASTER_TRIPS_FIELDS.numberOfGuests]: booking.numberOfGuests,
-    [MASTER_TRIPS_FIELDS.guestContact]: booking.guestName,
+    // MASTER_TRIPS_FIELDS.guestContact ("Guest Contact") was deleted from the
+    // base sometime after initial setup — see README "2026-08-03 incident".
+    // Guest name is folded into Comments below until a replacement field is chosen.
     [MASTER_TRIPS_FIELDS.comments]: comments,
     [MASTER_TRIPS_FIELDS.agreedCost]: booking.totalPaidThb,
     [MASTER_TRIPS_FIELDS.actualAmountPaid]: booking.totalPaidThb,
