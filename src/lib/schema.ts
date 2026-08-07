@@ -53,6 +53,7 @@ export const MASTER_TRIPS_CHOICES = {
 export const PROPERTIES_FIELDS = {
   airbnbId: "fldiDSwS3FzURkhpi", // numeric Airbnb room ID; matched against the rooms/{id} URL in booking emails
   airbnbListingTitle: "fld9Tvr8mNpzy9lG7", // display-only, used for human-readable comments/summaries
+  internalListingName: "fldbGV6PdAkF2Jhpk", // e.g. "SND 1906 | 1BR | 55SQ | 19F | SV | PT" — used for the short property code in notifications
   googleCalendarId: "flds2Pkaxh2nx4Kjc",
   city: "fldS3QKXfaYiBToIx", // singleSelect: "Pattaya" | "Phuket" — routes the Telegram notification
 } as const;

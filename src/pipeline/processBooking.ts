@@ -44,6 +44,7 @@ async function resolveProperty(
     fields: [
       PROPERTIES_FIELDS.airbnbId,
       PROPERTIES_FIELDS.airbnbListingTitle,
+      PROPERTIES_FIELDS.internalListingName,
       PROPERTIES_FIELDS.googleCalendarId,
       PROPERTIES_FIELDS.city,
     ],
@@ -177,6 +178,21 @@ function toAirtableDateString(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** "SND 1906 | 1BR | 55SQ | 19F | SV | PT" -> "SND-1906" */
+function extractPropertyCode(internalListingName: unknown): string | null {
+  if (typeof internalListingName !== "string" || !internalListingName.trim()) return null;
+  const firstSegment = internalListingName.split("|")[0].trim();
+  return firstSegment.replace(/\s+/, "-") || null;
+}
+
+function formatDateLong(date: Date): string {
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+function nightsBetween(checkIn: Date, checkoutExclusive: Date): number {
+  return Math.round((checkoutExclusive.getTime() - checkIn.getTime()) / 86_400_000);
+}
+
 export async function processBooking(booking: ParsedBooking): Promise<ProcessResult> {
   const existingTrip = await findExistingTripByConfirmationCode(booking.confirmationCode);
   if (existingTrip) {
@@ -266,9 +282,10 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
   let notificationNote = "not sent — property has no City set";
   if (region === "Pattaya" || region === "Phuket") {
     try {
+      const propertyCode = extractPropertyCode(property.fields[PROPERTIES_FIELDS.internalListingName]);
       await sendBookingNotification(
         region,
-        buildNotificationText(booking, listingTitle, calendarOutcome, crmResolution.phone)
+        buildNotificationText(booking, listingTitle, propertyCode, calendarOutcome, crmResolution.phone)
       );
       notificationNote = `sent to ${region} Telegram group`;
     } catch (err) {
@@ -294,19 +311,26 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
 function buildNotificationText(
   booking: ParsedBooking,
   listingTitle: string,
+  propertyCode: string | null,
   calendarOutcome: { blocked: boolean; note: string },
   phone: string | null
 ): string {
   const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
+  const nights = nightsBetween(booking.checkIn, booking.checkoutExclusive);
+  const propertyLine = propertyCode ? `🏠 <b>${propertyCode}</b> — ${listingTitle}` : `🏠 ${listingTitle}`;
+
   return [
-    `🛬 <b>New Airbnb booking</b>`,
-    `${booking.guestName} — ${listingTitle}`,
-    `Check-in: ${toAirtableDateString(booking.checkIn)} → Checkout: ${toAirtableDateString(booking.checkoutExclusive)}`,
-    `Guests: ${booking.numberOfGuests} ${guestNoun}`,
-    `Confirmation: ${booking.confirmationCode}`,
+    `🏝️ <b>New Airbnb Booking</b>`,
     "",
-    "✅ Created trip",
-    calendarOutcome.blocked ? "✅ Blocked calendar" : "⚠️ Calendar NOT blocked (no Google Calendar ID on file)",
+    `👤 ${booking.guestName}`,
+    propertyLine,
+    `📅 ${formatDateLong(booking.checkIn)} → ${formatDateLong(booking.checkoutExclusive)} · ${nights} nights`,
+    `👥 ${booking.numberOfGuests} ${guestNoun}`,
+    `🔖 ${booking.confirmationCode}`,
+    "",
+    "✅ Trip created",
+    calendarOutcome.blocked ? "✅ Calendar blocked" : "⚠️ Calendar NOT blocked (no Google Calendar ID on file)",
     `📞 Phone: ${phone ?? "not available"}`,
+    "👥 Create group with guest",
   ].join("\n");
 }
