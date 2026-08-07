@@ -33,34 +33,32 @@ a manual test run (`workflow_dispatch` in GitHub Actions, or the `curl`
 command under "Local testing" below) before turning `schedule:` back on in
 `.github/workflows/cron.yml`.
 
-## ⚠️ Guest phone number — Airbnb page scraper (unverified)
+## ⚠️ Guest phone number — Airbnb GraphQL lookup
 
 Real Airbnb "Reservation confirmed" emails contain no phone number anywhere.
-It's only available on Airbnb's *authenticated* "Manage reservation" panel on
-the hosting reservation-details page (`hosting/reservations/details/{code}`).
+It's only available via Airbnb's internal `StayHostingDetailsQuery` GraphQL
+API — the same call the "Manage reservation" panel makes — which
+`src/lib/airbnbScraper.ts` calls directly. Captured and verified against a
+real request/response on 2026-08-07 (not a heuristic HTML scrape).
 
-`src/lib/airbnbScraper.ts` fetches that page using a real, human-established
-login session (`AIRBNB_SESSION_COOKIE` — copy the `cookie` request header
-from Chrome DevTools while logged into Airbnb as the host) and heuristically
-scans the HTML for a phone number. **This has not been verified against a
-real logged-in session** — this environment had no way to inspect the actual
-network request the "Manage reservation" dialog makes. If it doesn't find a
-match in practice:
-
-1. Open DevTools → Network tab on a real reservation page, click
-   "Manage reservation", and find the XHR/fetch request that returns the
-   phone number.
-2. Share the request URL, headers, and response shape so
-   `fetchGuestPhoneFromAirbnb` can be pointed at the real endpoint instead of
-   scraping rendered HTML.
+**Setup**: set `AIRBNB_SESSION_COOKIE` to the full `cookie` request header
+value from a real, logged-in Airbnb session (Chrome DevTools → Network tab →
+any `airbnb.co.in` request → copy the `cookie` request header). Treat this
+value as sensitive as a password — it IS an active login session, not just
+an API key. Never paste it into chat, a commit, or anywhere outside a secret
+manager / Vercel's env vars.
 
 This code never automates login, solves a CAPTCHA, or otherwise bypasses bot
-detection — it only reuses a cookie you exported from your own already
-logged-in browser. That cookie **will expire periodically**; when phone
-lookups start failing, re-export it. Scraping an authenticated Airbnb page
-like this may also be against Airbnb's Terms of Service for automated
-access — that's a call for you to make about your own host account, not
-something this code enforces.
+detection — it only reuses a cookie exported from an already logged-in
+browser. That cookie **will expire periodically** (and instantly if you ever
+log out of that session); when phone lookups start failing, re-export it.
+Two things can also go stale independently and need re-capturing the same
+way if lookups start failing even with a fresh cookie:
+- The persisted-query hash (`QUERY_HASH` in `airbnbScraper.ts`) if Airbnb
+  ships a frontend update that changes this query's shape.
+- Airbnb's Terms of Service may prohibit this kind of automated access to
+  your own host account — that's a call for you to make, not something this
+  code enforces.
 
 **Graceful degradation**: if the scraper isn't configured, the session has
 expired, or Airbnb returns nothing recognizable, the pipeline never blocks

@@ -1,34 +1,79 @@
 /**
- * Best-effort lookup of the guest's phone number from Airbnb's authenticated
- * "Manage reservation" panel on the hosting reservation-details page.
+ * Looks up the guest's phone number via Airbnb's internal GraphQL API
+ * (StayHostingDetailsQuery), the same call the "Manage reservation" panel
+ * makes. Captured and verified against a real request/response on
+ * 2026-08-07 — see README "Phone lookup" for how this was discovered.
  *
- * IMPORTANT — this is unverified against Airbnb's real markup/API. This
- * session has no logged-in Airbnb session to inspect the actual network
- * request the "Manage reservation" dialog makes, so this fetches the
- * reservation-details page HTML and heuristically scans it for a phone
- * number near the confirmation code section. If it doesn't work in
- * practice, capture the real request from Chrome DevTools (Network tab →
- * click "Manage reservation" → find the XHR/fetch call that returns the
- * phone number → share the request URL, headers, and response shape) so
- * this can be pointed at the real endpoint instead of scraping HTML.
- *
- * Uses a pre-established, human-logged-in session cookie (AIRBNB_SESSION_COOKIE)
- * rather than ever automating an Airbnb login — this code never attempts to
- * authenticate, solve a CAPTCHA, or otherwise bypass bot detection. If Airbnb
- * challenges the session (login page, verification prompt, unexpected
- * response), this fails closed and the caller falls back to name-based CRM
+ * Uses a pre-established, human-logged-in session cookie
+ * (AIRBNB_SESSION_COOKIE) rather than ever automating an Airbnb login — this
+ * code never attempts to authenticate, solve a CAPTCHA, or otherwise bypass
+ * bot detection. If Airbnb challenges the session (expired cookie, bot
+ * check), this fails closed and the caller falls back to name-based CRM
  * matching — it never blocks trip/CRM/calendar creation.
  *
- * The session cookie is a real Airbnb login and will expire periodically;
- * re-export it from DevTools (Network tab → any airbnb.com request → copy
- * the `cookie` request header) and update AIRBNB_SESSION_COOKIE when lookups
- * start failing.
+ * The session cookie is a real, live Airbnb login and WILL expire — re-export
+ * it from DevTools (Network tab → any airbnb.co.in request → copy the full
+ * `cookie` request header) and update AIRBNB_SESSION_COOKIE when lookups
+ * start failing. Treat that cookie value as sensitive as a password: it IS
+ * an active login session, not just an API credential.
  */
+
+// Airbnb's public web-client API key — static across all users' sessions,
+// baked into their frontend JS bundle. Not a per-account secret.
+const AIRBNB_API_KEY = "d306zoyjsyarp7ifhu67rjxn52tv0t20";
+
+// Persisted-query hash for StayHostingDetailsQuery, captured from a real
+// request. Persisted query hashes can go stale if Airbnb ships a new
+// frontend build that changes this query's shape — if lookups start
+// returning PERSISTED_QUERY_NOT_FOUND-style errors, re-capture this from a
+// fresh DevTools session the same way it was found originally.
+const QUERY_HASH = "c6555d613e936ebaaab24219d2c6ddd6973721ef3ebe91020c4449f7971ea824";
 
 export type PhoneLookupResult = { ok: true; phone: string } | { ok: false; reason: string };
 
-const PHONE_NEAR_KEYWORD = /phone number[^+\d]{0,40}(\+?\d[\d\s\-()]{7,17}\d)/i;
-const GENERIC_INTL_PHONE = /\+\d{1,3}[\s-]?\d{1,4}[\s-]?\d{3,4}[\s-]?\d{3,5}/;
+function buildUrl(confirmationCode: string): string {
+  const variables = JSON.stringify({
+    confirmationCode,
+    requestSource: "MESSAGING",
+    viewerTimeZoneOffset: 420, // Asia/Bangkok, UTC+7, in minutes
+  });
+  const extensions = JSON.stringify({ persistedQuery: { version: 1, sha256Hash: QUERY_HASH } });
+  const params = new URLSearchParams({
+    operationName: "StayHostingDetailsQuery",
+    locale: "en-IN",
+    currency: "THB",
+    variables,
+    extensions,
+  });
+  return `https://www.airbnb.co.in/api/v3/StayHostingDetailsQuery/${QUERY_HASH}?${params.toString()}`;
+}
+
+/** Walks the response looking for the "Call" footer button, then falls back to the "Manage reservation" menu row. */
+function extractPhoneNumber(body: any): string | null {
+  const details = body?.data?.presentation?.hostingDetails?.stayHostingDetails;
+  if (!details) return null;
+
+  for (const section of details.footerPlacement ?? []) {
+    if (section.sectionId !== "FLOATINGFOOTER_SECTION") continue;
+    for (const button of section.sectionData?.buttons ?? []) {
+      const phone = button.buttonAction?.phoneNumber;
+      if (typeof phone === "string" && phone.trim()) return phone;
+    }
+  }
+
+  for (const section of details.rootPlacement ?? []) {
+    if (section.sectionId !== "MANAGE_RESERVATION_SECTION") continue;
+    for (const row of section.sectionData?.rows ?? []) {
+      for (const menuRow of row.action?.actionRowsForMenu ?? []) {
+        if (menuRow.icon === "SYSTEM_MAKE_CALL" && typeof menuRow.action?.textToCopy === "string") {
+          return menuRow.action.textToCopy;
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promise<PhoneLookupResult> {
   const cookie = process.env.AIRBNB_SESSION_COOKIE;
@@ -36,35 +81,41 @@ export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promi
     return { ok: false, reason: "AIRBNB_SESSION_COOKIE not configured — skipping phone lookup" };
   }
 
-  const url = `https://www.airbnb.com/hosting/reservations/details/${encodeURIComponent(confirmationCode)}`;
-
-  let html: string;
+  let res: Response;
   try {
-    const res = await fetch(url, {
+    res = await fetch(buildUrl(confirmationCode), {
       headers: {
         cookie,
+        accept: "*/*",
+        "content-type": "application/json",
+        "x-airbnb-api-key": AIRBNB_API_KEY,
+        "x-airbnb-graphql-platform": "web",
+        "x-airbnb-graphql-platform-client": "minimalist-niobe",
+        "x-csrf-without-token": "1",
         "user-agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        accept: "text/html,application/xhtml+xml",
       },
     });
-    if (!res.ok) {
-      return { ok: false, reason: `Airbnb reservation page returned HTTP ${res.status}` };
-    }
-    html = await res.text();
   } catch (err) {
-    return { ok: false, reason: `Airbnb reservation page fetch failed: ${(err as Error).message}` };
+    return { ok: false, reason: `Airbnb API request failed: ${(err as Error).message}` };
   }
 
-  if (/log ?in|verify it's you|security check/i.test(html.slice(0, 2000))) {
-    return { ok: false, reason: "Airbnb session appears logged out or challenged — re-export AIRBNB_SESSION_COOKIE" };
+  if (!res.ok) {
+    return {
+      ok: false,
+      reason: `Airbnb API returned HTTP ${res.status} — session cookie may have expired, re-export AIRBNB_SESSION_COOKIE`,
+    };
   }
 
-  const nearKeyword = html.match(PHONE_NEAR_KEYWORD);
-  if (nearKeyword) return { ok: true, phone: nearKeyword[1].trim() };
+  const body: any = await res.json().catch(() => null);
+  if (body?.errors?.length) {
+    return { ok: false, reason: `Airbnb API returned GraphQL errors: ${JSON.stringify(body.errors)}` };
+  }
 
-  const generic = html.match(GENERIC_INTL_PHONE);
-  if (generic) return { ok: true, phone: generic[0].trim() };
+  const phone = extractPhoneNumber(body);
+  if (!phone) {
+    return { ok: false, reason: "Phone number not found in Airbnb API response for this confirmation code" };
+  }
 
-  return { ok: false, reason: "No phone number pattern found in reservation-details page" };
+  return { ok: true, phone };
 }
