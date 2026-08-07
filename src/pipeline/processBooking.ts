@@ -105,7 +105,13 @@ async function findCrmContactsByName(
 }
 
 type CrmResolution =
-  | { ok: true; crmContactId: string; isRepeat: boolean; matchedBy: "phone" | "name-new" | "name-existing" }
+  | {
+      ok: true;
+      crmContactId: string;
+      isRepeat: boolean;
+      matchedBy: "phone" | "name-new" | "name-existing";
+      phone: string | null;
+    }
   | { ok: false; reason: string };
 
 async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution> {
@@ -115,7 +121,7 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
   if (normalizedPhone) {
     const existing = await findCrmContactByPhone(normalizedPhone);
     if (existing) {
-      return { ok: true, crmContactId: existing.id, isRepeat: true, matchedBy: "phone" };
+      return { ok: true, crmContactId: existing.id, isRepeat: true, matchedBy: "phone", phone: normalizedPhone };
     }
     const { firstName, lastName } = splitGuestName(booking.guestName);
     const created = await createRecord(TABLES.crm, {
@@ -128,7 +134,7 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
       [CRM_FIELDS.firstName]: firstName,
       [CRM_FIELDS.phoneNumber]: normalizedPhone,
     });
-    return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "phone" };
+    return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "phone", phone: normalizedPhone };
   }
 
   // Phone unavailable (scraper not configured, session expired, or no match found) — fall back to name.
@@ -145,7 +151,14 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
   }
 
   if (nameMatches.length === 1) {
-    return { ok: true, crmContactId: nameMatches[0].id, isRepeat: true, matchedBy: "name-existing" };
+    const existingPhone = nameMatches[0].fields[CRM_FIELDS.phoneNumber];
+    return {
+      ok: true,
+      crmContactId: nameMatches[0].id,
+      isRepeat: true,
+      matchedBy: "name-existing",
+      phone: typeof existingPhone === "string" ? existingPhone : null,
+    };
   }
 
   const created = await createRecord(TABLES.crm, {
@@ -157,7 +170,7 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
     [CRM_FIELDS.firstName]: firstName,
     [CRM_FIELDS.lastName]: lastName,
   });
-  return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "name-new" };
+  return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "name-new", phone: null };
 }
 
 function toAirtableDateString(date: Date): string {
@@ -253,7 +266,10 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
   let notificationNote = "not sent — property has no City set";
   if (region === "Pattaya" || region === "Phuket") {
     try {
-      await sendBookingNotification(region, buildNotificationText(booking, listingTitle, calendarOutcome));
+      await sendBookingNotification(
+        region,
+        buildNotificationText(booking, listingTitle, calendarOutcome, crmResolution.phone)
+      );
       notificationNote = `sent to ${region} Telegram group`;
     } catch (err) {
       // Notification failures never undo a successful trip/calendar creation — just log it.
@@ -278,18 +294,19 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
 function buildNotificationText(
   booking: ParsedBooking,
   listingTitle: string,
-  calendarOutcome: { blocked: boolean; note: string }
+  calendarOutcome: { blocked: boolean; note: string },
+  phone: string | null
 ): string {
   const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
-  const calendarLine = calendarOutcome.blocked
-    ? "📅 Calendar blocked"
-    : "⚠️ Calendar NOT blocked (no Google Calendar ID on file)";
   return [
     `🛬 <b>New Airbnb booking</b>`,
     `${booking.guestName} — ${listingTitle}`,
     `Check-in: ${toAirtableDateString(booking.checkIn)} → Checkout: ${toAirtableDateString(booking.checkoutExclusive)}`,
     `Guests: ${booking.numberOfGuests} ${guestNoun}`,
     `Confirmation: ${booking.confirmationCode}`,
-    calendarLine,
+    "",
+    "✅ Created trip",
+    calendarOutcome.blocked ? "✅ Blocked calendar" : "⚠️ Calendar NOT blocked (no Google Calendar ID on file)",
+    `📞 Phone: ${phone ?? "not available"}`,
   ].join("\n");
 }
