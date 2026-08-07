@@ -1,8 +1,9 @@
 /**
- * Sends booking notifications to region-specific Telegram groups (Pattaya /
- * Phuket) via the Bot API. Reuses the existing "My Claude Agent" bot token
- * rather than provisioning a new bot — this module only needs the bot to
- * already be a member of both destination group chats.
+ * Sends booking notifications to region-specific Telegram topics (Pattaya /
+ * Phuket) via the Bot API. Uses a dedicated bot already added as a member of
+ * both destination groups — each group is a "forum" (Topics-enabled)
+ * supergroup, so routing needs both a chat ID and a topic/thread ID, not
+ * just a chat ID.
  */
 
 export type Region = "Pattaya" | "Phuket";
@@ -13,20 +14,25 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function chatIdForRegion(region: Region): string {
+function targetForRegion(region: Region): { chatId: string; threadId: string } {
   return region === "Pattaya"
-    ? requireEnv("TELEGRAM_PATTAYA_CHAT_ID")
-    : requireEnv("TELEGRAM_PHUKET_CHAT_ID");
+    ? { chatId: requireEnv("TELEGRAM_PATTAYA_CHAT_ID"), threadId: requireEnv("TELEGRAM_PATTAYA_THREAD_ID") }
+    : { chatId: requireEnv("TELEGRAM_PHUKET_CHAT_ID"), threadId: requireEnv("TELEGRAM_PHUKET_THREAD_ID") };
 }
 
 export async function sendBookingNotification(region: Region, text: string): Promise<void> {
   const token = requireEnv("TELEGRAM_BOT_TOKEN");
-  const chatId = chatIdForRegion(region);
+  const { chatId, threadId } = targetForRegion(region);
 
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    body: JSON.stringify({
+      chat_id: Number(chatId),
+      message_thread_id: Number(threadId),
+      text,
+      parse_mode: "HTML",
+    }),
   });
 
   if (!res.ok) {

@@ -155,18 +155,23 @@ Phuket, based on the matched property's **City** field in Airtable (a plain
 `singleSelect` with just those two values, 100% populated for every property
 with an Airbnb ID).
 
-This reuses the existing Telegram bot ("My Claude Agent") rather than
-creating a new one:
+Uses a dedicated Telegram bot, already added as a member to both
+destination groups:
 
-1. Get the bot token from `~/.claude/channels/telegram/.env` on the machine
-   where it's already configured, and set it as `TELEGRAM_BOT_TOKEN`.
-2. Add that bot to both destination group chats (Pattaya bookings group,
-   Phuket bookings group) — invite it as a member the normal way.
-3. Get each group's chat ID: send any message in the group, then call
-   `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser — the
-   `chat.id` for that group appears in the response (group chat IDs are
-   negative numbers, e.g. `-1001234567890`).
-4. Set `TELEGRAM_PATTAYA_CHAT_ID` and `TELEGRAM_PHUKET_CHAT_ID` accordingly.
+1. Set `TELEGRAM_BOT_TOKEN` to that bot's token (from @BotFather).
+2. Both destination groups are **"forum" (Topics-enabled) supergroups** —
+   each ops region posts to its own topic within the group, not the group's
+   general channel. That means routing needs a chat ID *and* a topic/thread
+   ID per region, not just a chat ID.
+3. To get both values: open the target topic in Telegram Web/Desktop and
+   copy its link — it looks like `https://t.me/c/1952423863/11614`. The chat
+   ID is `-100` followed by the first number (`-1001952423863`); the second
+   number is the thread ID (`11614`).
+4. Set `TELEGRAM_PATTAYA_CHAT_ID` / `TELEGRAM_PATTAYA_THREAD_ID` and
+   `TELEGRAM_PHUKET_CHAT_ID` / `TELEGRAM_PHUKET_THREAD_ID` accordingly. You
+   can sanity-check a chat ID resolves to the right group by calling
+   `https://api.telegram.org/bot<TOKEN>/getChat?chat_id=<chatId>` and
+   checking the returned `title`.
 
 If a matched property has no City set (shouldn't happen in practice — see
 above), the notification is skipped and logged, never guessed. A
@@ -183,9 +188,11 @@ the run's `reason` string, not a reason to fail the booking.
 | `GMAIL_CLIENT_SECRET` | OAuth client secret (Gmail + Calendar) |
 | `GMAIL_REFRESH_TOKEN` | From `npm run get-gmail-token` — covers both Gmail and Calendar |
 | `CRON_SECRET` | Shared secret Vercel Cron sends as a Bearer token |
-| `TELEGRAM_BOT_TOKEN` | Existing bot token, from `~/.claude/channels/telegram/.env` |
-| `TELEGRAM_PATTAYA_CHAT_ID` | Chat ID of the Pattaya bookings Telegram group |
-| `TELEGRAM_PHUKET_CHAT_ID` | Chat ID of the Phuket bookings Telegram group |
+| `TELEGRAM_BOT_TOKEN` | Dedicated bot token, from @BotFather |
+| `TELEGRAM_PATTAYA_CHAT_ID` | Chat ID (with `-100` prefix) of the Pattaya bookings supergroup |
+| `TELEGRAM_PATTAYA_THREAD_ID` | Topic/thread ID of the Pattaya bookings topic within that group |
+| `TELEGRAM_PHUKET_CHAT_ID` | Chat ID (with `-100` prefix) of the Phuket bookings supergroup |
+| `TELEGRAM_PHUKET_THREAD_ID` | Topic/thread ID of the Phuket bookings topic within that group |
 | `AIRBNB_SESSION_COOKIE` *(optional)* | Cookie header from a logged-in Airbnb host session, for phone lookup — see above. Omitted = pipeline falls back to name-based CRM matching. |
 | `GMAIL_SEARCH_QUERY` *(optional)* | Override the Gmail search query |
 | `GMAIL_PROCESSED_LABEL` *(optional)* | Override the "done" label name |
