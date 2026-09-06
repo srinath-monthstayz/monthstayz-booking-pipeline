@@ -112,17 +112,31 @@ type CrmResolution =
       isRepeat: boolean;
       matchedBy: "phone" | "name-new" | "name-existing";
       phone: string | null;
+      /** Why the Airbnb phone lookup didn't produce a number, when it didn't. Surfaced in logs/notifications so this never requires guesswork. */
+      phoneLookupFailureReason: string | null;
     }
   | { ok: false; reason: string };
 
 async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution> {
   const phoneLookup = await fetchGuestPhoneFromAirbnb(booking.confirmationCode);
   const normalizedPhone = phoneLookup.ok ? normalizePhone(phoneLookup.phone) : null;
+  const phoneLookupFailureReason = phoneLookup.ok
+    ? normalizedPhone
+      ? null
+      : `Airbnb returned a phone number that failed to normalize: "${phoneLookup.phone}"`
+    : phoneLookup.reason;
 
   if (normalizedPhone) {
     const existing = await findCrmContactByPhone(normalizedPhone);
     if (existing) {
-      return { ok: true, crmContactId: existing.id, isRepeat: true, matchedBy: "phone", phone: normalizedPhone };
+      return {
+        ok: true,
+        crmContactId: existing.id,
+        isRepeat: true,
+        matchedBy: "phone",
+        phone: normalizedPhone,
+        phoneLookupFailureReason: null,
+      };
     }
     const { firstName, lastName } = splitGuestName(booking.guestName);
     const created = await createRecord(TABLES.crm, {
@@ -135,7 +149,14 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
       [CRM_FIELDS.firstName]: firstName,
       [CRM_FIELDS.phoneNumber]: normalizedPhone,
     });
-    return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "phone", phone: normalizedPhone };
+    return {
+      ok: true,
+      crmContactId: created.id,
+      isRepeat: false,
+      matchedBy: "phone",
+      phone: normalizedPhone,
+      phoneLookupFailureReason: null,
+    };
   }
 
   // Phone unavailable (scraper not configured, session expired, or no match found) — fall back to name.
@@ -146,7 +167,7 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
     return {
       ok: false,
       reason:
-        `Phone unavailable (${!phoneLookup.ok ? phoneLookup.reason : "no CRM match"}) and ` +
+        `Phone unavailable (${phoneLookupFailureReason}) and ` +
         `${nameMatches.length} CRM contacts share the name "${booking.guestName}" — ambiguous, cannot link safely`,
     };
   }
@@ -159,6 +180,7 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
       isRepeat: true,
       matchedBy: "name-existing",
       phone: typeof existingPhone === "string" ? existingPhone : null,
+      phoneLookupFailureReason,
     };
   }
 
@@ -171,7 +193,14 @@ async function resolveCrmContact(booking: ParsedBooking): Promise<CrmResolution>
     [CRM_FIELDS.firstName]: firstName,
     [CRM_FIELDS.lastName]: lastName,
   });
-  return { ok: true, crmContactId: created.id, isRepeat: false, matchedBy: "name-new", phone: null };
+  return {
+    ok: true,
+    crmContactId: created.id,
+    isRepeat: false,
+    matchedBy: "name-new",
+    phone: null,
+    phoneLookupFailureReason,
+  };
 }
 
 function toAirtableDateString(date: Date): string {
@@ -285,7 +314,14 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
       const propertyCode = extractPropertyCode(property.fields[PROPERTIES_FIELDS.internalListingName]);
       await sendBookingNotification(
         region,
-        buildNotificationText(booking, listingTitle, propertyCode, calendarOutcome, crmResolution.phone)
+        buildNotificationText(
+          booking,
+          listingTitle,
+          propertyCode,
+          calendarOutcome,
+          crmResolution.phone,
+          crmResolution.phoneLookupFailureReason
+        )
       );
       notificationNote = `sent to ${region} Telegram group`;
     } catch (err) {
@@ -302,6 +338,7 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
       eventId: calendarOutcome.eventId,
       calendarId,
       crmMatchedBy: crmResolution.matchedBy,
+      phoneLookupFailureReason: crmResolution.phoneLookupFailureReason,
       region,
       notificationNote,
     },
@@ -313,11 +350,15 @@ function buildNotificationText(
   listingTitle: string,
   propertyCode: string | null,
   calendarOutcome: { blocked: boolean; note: string },
-  phone: string | null
+  phone: string | null,
+  phoneLookupFailureReason: string | null
 ): string {
   const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
   const nights = nightsBetween(booking.checkIn, booking.checkoutExclusive);
   const propertyLine = propertyCode ? `🏠 <b>${propertyCode}</b> — ${listingTitle}` : `🏠 ${listingTitle}`;
+  const phoneLine = phone
+    ? `📞 Phone: ${phone}`
+    : `📞 Phone: not available (${phoneLookupFailureReason ?? "unknown reason"})`;
 
   return [
     `🏝️ <b>New Airbnb Booking</b>`,
@@ -330,7 +371,7 @@ function buildNotificationText(
     "",
     "✅ Trip created",
     calendarOutcome.blocked ? "✅ Calendar blocked" : "⚠️ Calendar NOT blocked (no Google Calendar ID on file)",
-    `📞 Phone: ${phone ?? "not available"}`,
+    phoneLine,
     "👥 Create group with guest",
   ].join("\n");
 }
