@@ -75,6 +75,28 @@ function extractPhoneNumber(body: any): string | null {
   return null;
 }
 
+/**
+ * Turns a raw GraphQL error object into a short, human-readable reason —
+ * this flows straight into the Telegram notification, so it must never be
+ * the full raw error blob (which can run to hundreds of lines of internal
+ * Airbnb metadata/stack info).
+ */
+function summarizeGraphQlError(error: any): string {
+  const type = error?.extensions?.errorType;
+  const message: string = typeof error?.message === "string" ? error.message : "unknown error";
+
+  if (type === "PERMISSION_DENIED" || /permission denied/i.test(message)) {
+    return (
+      "Airbnb denied access to this reservation's details — the session cookie's account likely lacks " +
+      "read access to this specific listing (e.g. it belongs to a co-host without full permissions rather " +
+      "than the primary owner). Try re-exporting AIRBNB_SESSION_COOKIE from the account that owns this listing."
+    );
+  }
+
+  const short = message.length > 150 ? `${message.slice(0, 150)}…` : message;
+  return `Airbnb API returned an error: ${short}`;
+}
+
 export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promise<PhoneLookupResult> {
   const cookie = process.env.AIRBNB_SESSION_COOKIE;
   if (!cookie) {
@@ -109,7 +131,7 @@ export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promi
 
   const body: any = await res.json().catch(() => null);
   if (body?.errors?.length) {
-    return { ok: false, reason: `Airbnb API returned GraphQL errors: ${JSON.stringify(body.errors)}` };
+    return { ok: false, reason: summarizeGraphQlError(body.errors[0]) };
   }
 
   const phone = extractPhoneNumber(body);

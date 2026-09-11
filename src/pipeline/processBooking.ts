@@ -356,9 +356,12 @@ function buildNotificationText(
   const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
   const nights = nightsBetween(booking.checkIn, booking.checkoutExclusive);
   const propertyLine = propertyCode ? `🏠 <b>${propertyCode}</b> — ${listingTitle}` : `🏠 ${listingTitle}`;
-  const phoneLine = phone
-    ? `📞 Phone: ${phone}`
-    : `📞 Phone: not available (${phoneLookupFailureReason ?? "unknown reason"})`;
+  // Safety net: whatever produced this reason should already be short (see
+  // airbnbScraper.ts summarizeGraphQlError), but never let a notification
+  // balloon into a wall of text regardless of where the reason came from.
+  const reason = phoneLookupFailureReason ?? "unknown reason";
+  const shortReason = reason.length > 200 ? `${reason.slice(0, 200)}…` : reason;
+  const phoneLine = phone ? `📞 Phone: ${phone}` : `📞 Phone: not available (${shortReason})`;
 
   return [
     `🏝️ <b>New Airbnb Booking</b>`,
