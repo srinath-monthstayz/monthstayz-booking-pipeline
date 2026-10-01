@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listNewBookingEmailIds, getBookingEmail, markBookingEmailProcessed, markBookingEmailNeedsAttention } from "@/lib/gmail";
 import { parseBookingEmail } from "@/lib/parseBooking";
-import { processBooking } from "@/pipeline/processBooking";
+import { processBooking, notifyUnparsedBookingEmail } from "@/pipeline/processBooking";
 import { RunLogger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
 
       if (!parsed.ok) {
         logger.record({ outcome: "skipped", gmailMessageId: messageId, reason: parsed.failure.reason });
+        await notifyUnparsedBookingEmail(email.subject, parsed.failure.reason);
         await markBookingEmailNeedsAttention(messageId);
         continue;
       }

@@ -222,6 +222,62 @@ function nightsBetween(checkIn: Date, checkoutExclusive: Date): number {
   return Math.round((checkoutExclusive.getTime() - checkIn.getTime()) / 86_400_000);
 }
 
+/**
+ * Airtable's API always returns a singleSelect as {id, name, color} here
+ * (this base is queried with returnFieldsByFieldId, which doesn't change
+ * that) — never the bare "Pattaya"/"Phuket" string. Comparing the raw field
+ * value against those strings directly silently matches nothing.
+ */
+function extractCityRegion(value: unknown): Region | null {
+  const name = value && typeof value === "object" && "name" in (value as any) ? (value as any).name : value;
+  return name === "Pattaya" || name === "Phuket" ? (name as Region) : null;
+}
+
+/** Best-effort fan-out; a notification failure never affects processing or labeling. */
+async function broadcastToRegions(region: Region | null, text: string): Promise<void> {
+  const regions: Region[] = region ? [region] : ["Pattaya", "Phuket"];
+  for (const r of regions) {
+    try {
+      await sendBookingNotification(r, text);
+    } catch {
+      // swallowed — see function comment
+    }
+  }
+}
+
+function buildSkippedNotificationText(booking: ParsedBooking, reason: string): string {
+  const guestNoun = booking.numberOfGuests === 1 ? "guest" : "guests";
+  const nights = nightsBetween(booking.checkIn, booking.checkoutExclusive);
+  const shortReason = reason.length > 300 ? `${reason.slice(0, 300)}…` : reason;
+  return [
+    `⚠️ <b>Booking Needs Attention</b>`,
+    "",
+    `👤 ${booking.guestName}`,
+    `📅 ${formatDateLong(booking.checkIn)} → ${formatDateLong(booking.checkoutExclusive)} · ${nights} nights`,
+    `👥 ${booking.numberOfGuests} ${guestNoun}`,
+    `🔖 ${booking.confirmationCode}`,
+    `🔗 Airbnb room ID: ${booking.airbnbRoomId}`,
+    "",
+    `❌ Not processed: ${shortReason}`,
+  ].join("\n");
+}
+
+async function notifySkippedBooking(booking: ParsedBooking, reason: string, region: Region | null): Promise<void> {
+  await broadcastToRegions(region, buildSkippedNotificationText(booking, reason));
+}
+
+/** For emails that failed to parse at all — no ParsedBooking exists yet, so this only has the subject line and the parse failure reason. */
+export async function notifyUnparsedBookingEmail(subject: string, reason: string): Promise<void> {
+  const text = [
+    `⚠️ <b>Booking Needs Attention</b>`,
+    "",
+    `✉️ ${subject}`,
+    "",
+    `❌ Could not parse this email: ${reason}`,
+  ].join("\n");
+  await broadcastToRegions(null, text);
+}
+
 export async function processBooking(booking: ParsedBooking): Promise<ProcessResult> {
   const existingTrip = await findExistingTripByConfirmationCode(booking.confirmationCode);
   if (existingTrip) {
@@ -234,12 +290,15 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
 
   const propertyResult = await resolveProperty(booking.airbnbRoomId);
   if (!propertyResult.ok) {
+    await notifySkippedBooking(booking, propertyResult.reason, null);
     return { outcome: "skipped", reason: propertyResult.reason, retryable: true };
   }
   const property = propertyResult.property;
 
   const crmResolution = await resolveCrmContact(booking);
   if (!crmResolution.ok) {
+    const region = extractCityRegion(property.fields[PROPERTIES_FIELDS.city]);
+    await notifySkippedBooking(booking, crmResolution.reason, region);
     return { outcome: "skipped", reason: crmResolution.reason, retryable: true };
   }
   const crmContactId = crmResolution.crmContactId;
@@ -307,9 +366,9 @@ export async function processBooking(booking: ParsedBooking): Promise<ProcessRes
     }
   }
 
-  const region = property.fields[PROPERTIES_FIELDS.city] as Region | undefined;
+  const region = extractCityRegion(property.fields[PROPERTIES_FIELDS.city]);
   let notificationNote = "not sent — property has no City set";
-  if (region === "Pattaya" || region === "Phuket") {
+  if (region) {
     try {
       const propertyCode = extractPropertyCode(property.fields[PROPERTIES_FIELDS.internalListingName]);
       await sendBookingNotification(
