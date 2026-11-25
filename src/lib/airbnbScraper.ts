@@ -86,23 +86,25 @@ function summarizeGraphQlError(error: any): string {
   const message: string = typeof error?.message === "string" ? error.message : "unknown error";
 
   if (type === "PERMISSION_DENIED" || /permission denied/i.test(message)) {
-    return (
-      "Airbnb denied access to this reservation's details — the session cookie's account likely lacks " +
-      "read access to this specific listing (e.g. it belongs to a co-host without full permissions rather " +
-      "than the primary owner). Try re-exporting AIRBNB_SESSION_COOKIE from the account that owns this listing."
-    );
+    return "no access to this listing";
   }
 
-  const short = message.length > 150 ? `${message.slice(0, 150)}…` : message;
-  return `Airbnb API returned an error: ${short}`;
+  const short = message.length > 80 ? `${message.slice(0, 80)}…` : message;
+  return `Airbnb error: ${short}`;
 }
 
-export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promise<PhoneLookupResult> {
-  const cookie = process.env.AIRBNB_SESSION_COOKIE;
-  if (!cookie) {
-    return { ok: false, reason: "AIRBNB_SESSION_COOKIE not configured — skipping phone lookup" };
-  }
+/**
+ * Every configured Airbnb login, in the order they're tried. A listing is
+ * only readable by an account with host access to it, so covering listings
+ * spread across several accounts means trying each until one succeeds.
+ * AIRBNB_SESSION_COOKIE is account 1; AIRBNB_SESSION_COOKIE_2.._9 are extras.
+ */
+function configuredCookies(): string[] {
+  const names = ["AIRBNB_SESSION_COOKIE", ...Array.from({ length: 8 }, (_, i) => `AIRBNB_SESSION_COOKIE_${i + 2}`)];
+  return names.map((n) => process.env[n]).filter((v): v is string => !!v);
+}
 
+async function lookupWithCookie(cookie: string, confirmationCode: string): Promise<PhoneLookupResult> {
   let res: Response;
   try {
     res = await fetch(buildUrl(confirmationCode), {
@@ -119,14 +121,11 @@ export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promi
       },
     });
   } catch (err) {
-    return { ok: false, reason: `Airbnb API request failed: ${(err as Error).message}` };
+    return { ok: false, reason: `request failed: ${(err as Error).message}` };
   }
 
   if (!res.ok) {
-    return {
-      ok: false,
-      reason: `Airbnb API returned HTTP ${res.status} — session cookie may have expired, re-export AIRBNB_SESSION_COOKIE`,
-    };
+    return { ok: false, reason: `HTTP ${res.status}, cookie likely expired` };
   }
 
   const body: any = await res.json().catch(() => null);
@@ -136,8 +135,24 @@ export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promi
 
   const phone = extractPhoneNumber(body);
   if (!phone) {
-    return { ok: false, reason: "Phone number not found in Airbnb API response for this confirmation code" };
+    return { ok: false, reason: "no phone number in response" };
   }
 
   return { ok: true, phone };
+}
+
+export async function fetchGuestPhoneFromAirbnb(confirmationCode: string): Promise<PhoneLookupResult> {
+  const cookies = configuredCookies();
+  if (cookies.length === 0) {
+    return { ok: false, reason: "AIRBNB_SESSION_COOKIE not configured — skipping phone lookup" };
+  }
+
+  const failures: string[] = [];
+  for (let i = 0; i < cookies.length; i++) {
+    const result = await lookupWithCookie(cookies[i], confirmationCode);
+    if (result.ok) return result;
+    failures.push(`account ${i + 1}: ${result.reason}`);
+  }
+
+  return { ok: false, reason: `Airbnb lookup failed (${failures.join("; ")})` };
 }
